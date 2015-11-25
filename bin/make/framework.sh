@@ -29,6 +29,17 @@ function ditto_or_exit {
   fi
 }
 
+function xcode_gte_7 {
+ XC_MAJOR=`xcrun xcodebuild -version | awk 'NR==1{print $2}' | awk -v FS="." '{ print $1 }'`
+ if [ "${XC_MAJOR}" \> "7" -o "${XC_MAJOR}" = "7" ]; then
+   echo "true"
+ else
+   echo "false"
+ fi
+}
+
+XC_GTE_7=$(xcode_gte_7)
+
 XC_TARGET=calabash
 XC_PROJECT=calabash.xcodeproj
 XC_SCHEME=calabash
@@ -75,8 +86,8 @@ fi
 
 banner "Building Framework Simulator Library"
 
-SIM_LIBRARY="${SIM_BUILD_DIR}/Build/Products/${XC_BUILD_CONFIG}-iphonesimulator/${LIBRARY_NAME}"
-rm -rf "${SIM_LIBRARY}"
+SEARCH_PATH="${SIM_BUILD_DIR}/Build/Products"
+rm -rf "${SEARCH_PATH}"
 
 xcrun xcodebuild build \
   -project ${XC_PROJECT} \
@@ -102,9 +113,11 @@ else
   info "Building simulator library for framework succeeded."
 fi
 
+SIM_LIBRARY=`find "${SEARCH_PATH}" -name "libcalabash.a" -type f -print0`
+
 ditto_or_exit "${SIM_LIBRARY}" "${SIM_PRODUCTS_DIR}/${LIBRARY_NAME}"
 
-HEADERS="${SIM_BUILD_DIR}/Build/Products/Debug-iphonesimulator/calabashHeaders"
+HEADERS=`find "${SEARCH_PATH}" -name "calabashHeaders" -type d -print0`
 ditto_or_exit "${HEADERS}" "${FAT_PRODUCTS_DIR}/Headers"
 
 banner "Building Framework ARM Library"
@@ -118,6 +131,10 @@ rm -rf "${ARM_LIBRARY_XC7}"
 ARM_LIBRARY_XC6="${ARM_BUILD_DIR}/Build/Intermediates/UninstalledProducts/${LIBRARY_NAME}"
 rm -rf "${ARM_LIBRARY_XC6}"
 
+if [ "${XC_GTE_7}" = "true" ]; then
+  XC7_FLAGS="OTHER_CFLAGS=\"-fembed-bitcode\" DEPLOYMENT_POSTPROCESSING=YES ENABLE_BITCODE=YES"
+fi
+
 xcrun xcodebuild install \
   -project "${XC_PROJECT}" \
   -scheme "${XC_SCHEME}" \
@@ -126,8 +143,7 @@ xcrun xcodebuild install \
   -configuration "${XC_BUILD_CONFIG}" \
   ARCHS="armv7 armv7s arm64" \
   VALID_ARCHS="armv7 armv7s arm64" \
-  ONLY_ACTIVE_ARCH=NO \
-  -sdk iphoneos \
+  ${XC7_FLAGS} -sdk iphoneos \
   IPHONE_DEPLOYMENT_TARGET=6.0 \
   GCC_TREAT_WARNINGS_AS_ERRORS=YES \
   GCC_GENERATE_TEST_COVERAGE_FILES=NO \
@@ -229,4 +245,31 @@ fi
 
 echo "Built version: `./${INSTALLED_FRAMEWORK}/Resources/version | tr -d '\n'`"
 lipo -info "${INSTALLED_FRAMEWORK}/calabash"
+
+if [ "${XC_GTE_7}"  = "true" ]; then
+
+  xcrun otool -arch arm64 -l calabash.framework/calabash | grep -q bitcode
+  if [ $? -eq 0 ]; then
+    echo "calabash.framework/calabash contains bitcode for arm64"
+  else
+    echo "calabash.framework/calabash does not contain bitcode for arm64"
+    exit 1
+  fi
+
+  xcrun otool -arch armv7s -l calabash.framework/calabash | grep -q bitcode
+  if [ $? -eq 0 ]; then
+    echo "calabash.framework/calabash contains bitcode for armv7s"
+  else
+    echo "calabash.framework/calabash does not contain bitcode for armv7s"
+    exit 1
+  fi
+
+  xcrun otool -arch armv7 -l calabash.framework/calabash | grep -q bitcode
+  if [ $? -eq 0 ]; then
+    echo "calabash.framework/calabash contains bitcode for armv7"
+  else
+    echo "calabash.framework/calabash does not contain bitcode for armv7"
+    exit 1
+  fi
+fi
 
